@@ -1,0 +1,93 @@
+/* src/App.css */
+body, html {
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Prevent scrolling while drawing */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background-color: #f0f0f3;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  position: relative;
+}
+
+canvas {
+  touch-action: none; /* Critical for stylus support */
+  display: block;
+  background-color: white;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  cursor: crosshair;
+}
+
+/* Floating Toolbar (GoodNotes style) */
+.toolbar {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  padding: 12px 24px;
+  border-radius: 16px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  border: 1px solid rgba(0,0,0,0.1);
+  z-index: 100;
+}
+
+.tool-group {
+  display: flex;
+  gap: 8px;
+  padding-right: 16px;
+  border-right: 1px solid #ddd;
+}
+
+.tool-group:last-child {
+  border-right: none;
+}
+
+button {
+  border: none;
+  background: none;
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #555;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+button:hover {
+  background-color: #f0f0f0;
+}
+
+button.active {
+  background-color: #e3f2fd;
+  color: #2196f3;
+}
+
+.color-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.color-dot.active {
+  border-color: #333;
+  transform: scale(1.1);
+}
+
+input[type="range"] {
+  width: 100px;
+}
