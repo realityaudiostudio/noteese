@@ -48,7 +48,7 @@ Want to run this locally? Follow these steps:
 
 2.  **Install Dependencies**
     ```bash
-    npm install
+    pnpm install
     ```
 
 3.  **Configure Environment Variables**
