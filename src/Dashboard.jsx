@@ -71,7 +71,7 @@ const Dashboard = ({ session }) => {
     messageApi.success("New notebook created");
   };
 
-  const deleteNotebook = (notebookId) => {
+ const deleteNotebook = (notebookId) => {
     Modal.confirm({
       title: 'Delete this notebook?',
       content: 'This action will permanently delete the notebook and all its pages.',
@@ -81,23 +81,24 @@ const Dashboard = ({ session }) => {
       centered: true,
       onOk: async () => {
         try {
-          const folderPrefix = `${session.user.id}/${notebookId}/`;
-          const listCommand = new ListObjectsV2Command({
-            Bucket: R2_BUCKET_NAME,
-            Prefix: folderPrefix,
+          // 1. Call our new Backend API to delete the files from R2
+          const response = await fetch('/api/delete-notebook', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              userId: session.user.id, 
+              notebookId: notebookId 
+            }),
           });
-          const listOutput = await r2.send(listCommand);
 
-          if (listOutput.Contents && listOutput.Contents.length > 0) {
-            const objectsToDelete = listOutput.Contents.map((obj) => ({ Key: obj.Key }));
-            const deleteCommand = new DeleteObjectsCommand({
-              Bucket: R2_BUCKET_NAME,
-              Delete: { Objects: objectsToDelete },
-            });
-            await r2.send(deleteCommand);
+          if (!response.ok) {
+            throw new Error("Failed to delete files from cloud storage");
           }
 
-          await supabase.from('notebooks').delete().eq('id', notebookId);
+          // 2. If Cloud delete successful, delete from Supabase Database
+          const { error } = await supabase.from('notebooks').delete().eq('id', notebookId);
+          if (error) throw error;
+          
           fetchNotebooks();
           messageApi.success('Notebook deleted successfully');
           
