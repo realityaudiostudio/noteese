@@ -1,5 +1,8 @@
 {
   "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/" }
-  ]
+  ],
+  "devCommand": "pnpm run dev",
+  "framework": "vite"
 }

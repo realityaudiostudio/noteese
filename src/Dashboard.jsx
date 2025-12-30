@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
-import { Book, Plus, LogOut, Trash2, FileUp, Loader2 } from 'lucide-react';
+import { Book, Plus, LogOut, Trash2, FileUp, Loader2, Crown } from 'lucide-react'; // Added Crown icon
 import { 
   S3Client, 
   PutObjectCommand, 
@@ -19,14 +19,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs
 // --- R2 CONFIGURATION ---
 const R2_BUCKET_NAME = "varapage";
 const R2_PUBLIC_DOMAIN = "https://files.btechified.in"; 
-// const r2 = new S3Client({
-//   region: "auto",
-//   endpoint: `https://${import.meta.env.VITE_R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-//   credentials: {
-//     accessKeyId: import.meta.env.VITE_R2_ACCESS_KEY_ID, 
-//     secretAccessKey: import.meta.env.VITE_R2_SECRET_KEY, 
-//   },
-// });
 
 const Dashboard = ({ session }) => {
   const [notebooks, setNotebooks] = useState([]);
@@ -34,7 +26,8 @@ const Dashboard = ({ session }) => {
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(''); 
   
-  // -- NEW: Initial Loading State --
+  // -- NEW: State for Premium Status --
+  const [isPremium, setIsPremium] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
 
   const navigate = useNavigate();
@@ -42,36 +35,80 @@ const Dashboard = ({ session }) => {
   const [messageApi, contextHolder] = message.useMessage();
 
   useEffect(() => {
-    fetchNotebooks();
+    fetchData();
   }, []);
 
-  const fetchNotebooks = async () => {
+  const fetchData = async () => {
     try {
-        const { data, error } = await supabase
+        // 1. Fetch Notebooks
+        const { data: notes, error: notesError } = await supabase
         .from('notebooks')
         .select('*')
         .order('created_at', { ascending: false });
         
-        if (!error) setNotebooks(data);
+        if (!notesError) setNotebooks(notes);
+
+        // 2. Fetch Premium Status
+        const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('is_premium')
+        .eq('id', session.user.id)
+        .single();
+
+        if (!profileError && profile) {
+            setIsPremium(profile.is_premium);
+        }
+
     } catch (error) {
-        console.error("Error fetching notebooks", error);
+        console.error("Error fetching data", error);
     } finally {
-        // Stop the full-screen loader
         setLoadingInitial(false);
     }
+  };
+
+  // --- HELPER: CHECK LIMIT ---
+  const checkLimit = () => {
+    if (isPremium) return true; // Premium users have no limit
+    if (notebooks.length >= 3) {
+        Modal.warning({
+            title: 'Limit Reached (3/3)',
+            content: (
+                <div>
+                    <p>You have reached the limit of 3 free notebooks.</p>
+                    <p className="font-bold mt-2">Upgrade to Premium to create unlimited notebooks!</p>
+                </div>
+            ),
+            okText: 'Upgrade Now',
+            maskClosable: true,
+            onOk: () => {
+                // Logic to redirect to payment page goes here
+                window.open('https://your-payment-link.com', '_blank');
+            }
+        });
+        return false;
+    }
+    return true;
   };
 
   const createNotebook = async (e) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
+
+    // 1. Check Limit
+    if (!checkLimit()) return;
+
     const { data: notebook } = await supabase.from('notebooks').insert([{ user_id: session.user.id, title: newTitle }]).select().single();
     await supabase.from('pages').insert([{ notebook_id: notebook.id, page_number: 1, drawing_data: [] }]);
     setNewTitle('');
-    fetchNotebooks();
+    
+    // Refresh list
+    const { data } = await supabase.from('notebooks').select('*').order('created_at', { ascending: false });
+    setNotebooks(data);
+    
     messageApi.success("New notebook created");
   };
 
- const deleteNotebook = (notebookId) => {
+  const deleteNotebook = (notebookId) => {
     Modal.confirm({
       title: 'Delete this notebook?',
       content: 'This action will permanently delete the notebook and all its pages.',
@@ -81,7 +118,6 @@ const Dashboard = ({ session }) => {
       centered: true,
       onOk: async () => {
         try {
-          // 1. Call our new Backend API to delete the files from R2
           const response = await fetch('/api/delete-notebook', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -91,17 +127,15 @@ const Dashboard = ({ session }) => {
             }),
           });
 
-          if (!response.ok) {
-            throw new Error("Failed to delete files from cloud storage");
-          }
+          if (!response.ok) throw new Error("Failed to delete files");
 
-          // 2. If Cloud delete successful, delete from Supabase Database
-          const { error } = await supabase.from('notebooks').delete().eq('id', notebookId);
-          if (error) throw error;
+          await supabase.from('notebooks').delete().eq('id', notebookId);
           
-          fetchNotebooks();
+          // Refresh list manually to avoid full reload
+          const { data } = await supabase.from('notebooks').select('*').order('created_at', { ascending: false });
+          setNotebooks(data);
+          
           messageApi.success('Notebook deleted successfully');
-          
         } catch (error) {
           console.error("Error deleting notebook:", error);
           messageApi.error("Failed to delete notebook fully.");
@@ -112,30 +146,15 @@ const Dashboard = ({ session }) => {
 
   const uploadToR2 = async (blob, fileName) => {
     try {
-      // 1. Ask our Vercel Backend for a secure permission slip (Signed URL)
       const response = await fetch('/api/sign-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          fileName: fileName,
-          fileType: 'image/jpeg' 
-        }),
+        body: JSON.stringify({ fileName, fileType: 'image/jpeg' }),
       });
-
       if (!response.ok) throw new Error('Failed to get signed URL');
       const { url } = await response.json();
-
-      // 2. Upload the file directly to R2 using that secure URL
-      await fetch(url, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'image/jpeg' },
-        body: blob,
-      });
-
-      // 3. Return the public URL for display
-      // Note: Make sure R2_PUBLIC_DOMAIN is still defined in your code constants
+      await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
       return `${R2_PUBLIC_DOMAIN}/${fileName}`;
-      
     } catch (error) {
       console.error("Upload Error:", error);
       throw error;
@@ -145,6 +164,12 @@ const Dashboard = ({ session }) => {
   const handlePdfImport = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
+    // 1. Check Limit BEFORE doing any heavy processing
+    if (!checkLimit()) {
+        e.target.value = null; // Reset file input
+        return;
+    }
 
     setIsImporting(true);
     setImportProgress('Initializing...');
@@ -192,7 +217,11 @@ const Dashboard = ({ session }) => {
 
       setImportProgress('Saving to database...');
       await supabase.from('pages').insert(pagesPayload);
-      fetchNotebooks();
+      
+      // Refresh list
+      const { data } = await supabase.from('notebooks').select('*').order('created_at', { ascending: false });
+      setNotebooks(data);
+      
       messageApi.success('PDF Imported successfully!');
 
     } catch (err) {
@@ -201,6 +230,7 @@ const Dashboard = ({ session }) => {
     } finally {
       setIsImporting(false);
       setImportProgress('');
+      if(fileInputRef.current) fileInputRef.current.value = null;
     }
   };
 
@@ -223,13 +253,27 @@ const Dashboard = ({ session }) => {
         {/* HEADER SECTION */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-10 gap-4">
           <div>
-            {/* --- MOVED LOGO HERE --- */}
-            <div className="h-16 w-16 flex items-center justify-center text-white font-bold text-xs select-none">
-                <img src='/introos.svg' alt='logo'/>
+            {/* --- LOGO --- */}
+            <div className="h-16 w-16 flex items-center justify-center text-white font-bold text-xs select-none mb-2">
+                <img src='/introos.svg' alt='logo' className="w-full h-full object-contain"/>
             </div>
 
-            <h1 className="text-3xl sm:text-4xl font-extrabold text-[#1a1a1a] tracking-tight mb-1">Library</h1>
-            <p className="text-gray-500 font-medium">Manage your notebooks and documents</p>
+            <div className="flex items-center gap-3">
+                <h1 className="text-3xl sm:text-4xl font-extrabold text-[#1a1a1a] tracking-tight mb-1">Library</h1>
+                {isPremium && (
+                    <span className="bg-gradient-to-r from-yellow-400 to-amber-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 shadow-sm">
+                        <Crown size={10} fill="currentColor" /> Premium
+                    </span>
+                )}
+            </div>
+            
+            {/* LIMIT INDICATOR (Only for Free users) */}
+            {!isPremium && (
+                <div className="flex items-center gap-2 mt-1">
+                    <p className="text-gray-500 font-medium">Free Plan: {notebooks.length} / 3 Notebooks used</p>
+                    {notebooks.length >= 3 && <span className="text-red-500 text-xs font-bold bg-red-50 px-2 py-0.5 rounded-md">Limit Reached</span>}
+                </div>
+            )}
           </div>
           
           <button 
@@ -254,7 +298,8 @@ const Dashboard = ({ session }) => {
             />
             <button 
               type="submit" 
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl transition-colors font-semibold flex items-center gap-2 text-sm shadow-sm whitespace-nowrap flex-shrink-0"
+              // Disable visually if limit reached (optional, since logic blocks it anyway)
+              className={`px-6 py-2.5 rounded-xl transition-colors font-semibold flex items-center gap-2 text-sm shadow-sm whitespace-nowrap flex-shrink-0 ${!isPremium && notebooks.length >= 3 ? 'bg-gray-400 cursor-not-allowed text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
             >
               <Plus size={20} className="flex-shrink-0" /> New
             </button>
@@ -266,14 +311,14 @@ const Dashboard = ({ session }) => {
             <button 
               onClick={() => fileInputRef.current.click()}
               disabled={isImporting}
-              className="w-full h-full px-6 py-3 bg-white border border-gray-200 hover:border-gray-300 text-gray-700 rounded-2xl flex items-center justify-center gap-2.5 hover:bg-gray-50 transition-all font-semibold text-sm shadow-sm whitespace-nowrap"
+              className={`w-full h-full px-6 py-3 border rounded-2xl flex items-center justify-center gap-2.5 transition-all font-semibold text-sm shadow-sm whitespace-nowrap ${!isPremium && notebooks.length >= 3 ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300'}`}
             >
               {isImporting ? (
                 <Loader2 className="animate-spin text-blue-600 flex-shrink-0" size={20}/>
               ) : (
                 <FileUp size={20} className="flex-shrink-0" />
               )}
-              <span>{isImporting ? importProgress : "Import PDF as New Notebook"}</span>
+              <span>{isImporting ? importProgress : "Import PDF"}</span>
             </button>
           </div>
         </div>
