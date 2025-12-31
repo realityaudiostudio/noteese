@@ -3,8 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getStroke } from 'perfect-freehand';
 import { supabase } from './supabaseClient';
 import jsPDF from 'jspdf';
-import { message } from 'antd';
-import { Pen, Eraser, Highlighter, Save, ArrowLeft, Download, ChevronLeft, ChevronRight, PlusCircle, Loader2, Eye, EyeOff } from 'lucide-react';
+import { message, Modal } from 'antd';
+import { Pen, Eraser, Highlighter, Save, ArrowLeft, Download, ChevronLeft, ChevronRight, PlusCircle, Loader2, Eye, EyeOff, Zap } from 'lucide-react';
 
 // -- SHARED HELPERS --
 
@@ -26,21 +26,28 @@ const checkCollision = (linePoints, ex, ey) => {
   return linePoints.some(p => Math.hypot(p[0] - ex, p[1] - ey) < 20);
 };
 
-const renderStroke = (ctx, points, color, size, isHighlighter) => {
+const renderStroke = (ctx, points, color, size, isHighlighter, opacity = 1) => {
     if (points.length < 2) return;
     const options = { size, thinning: 0.5, smoothing: 0.5, streamline: 0.5, simulatePressure: true };
     const outlinePoints = getStroke(points, options);
     const pathData = getSvgPathFromStroke(outlinePoints);
+    
     ctx.fillStyle = color;
+    
+    // -- UPDATED: Handle Opacity for Fading --
+    ctx.globalAlpha = opacity; 
+    
     if (isHighlighter) { 
-        ctx.globalAlpha = 0.3; 
+        ctx.globalAlpha = 0.3 * opacity; 
         ctx.globalCompositeOperation = 'multiply'; 
     } else { 
-        ctx.globalAlpha = 1; 
         ctx.globalCompositeOperation = 'source-over'; 
     }
+    
     const path = new Path2D(pathData);
     ctx.fill(path);
+    
+    // Reset context
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
 };
@@ -60,7 +67,11 @@ const Whiteboard = ({ session }) => {
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   
-  // -- NEW: Initial Loading State --
+  // -- LASER STATE --
+  const [laserLines, setLaserLines] = useState([]);
+
+  // -- UNSAVED CHANGES STATE --
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
   
   // -- NOTEBOOK STATE --
@@ -69,28 +80,52 @@ const Whiteboard = ({ session }) => {
   const [animClass, setAnimClass] = useState('');
   const [backgroundImage, setBackgroundImage] = useState(null);
 
-  // -- UI STATE --
   const [uiVisible, setUiVisible] = useState(true);
 
   // -- INITIAL LOAD & RESIZE --
   useEffect(() => {
     fetchPages();
     
-    // Aggressive resize handler
     const handleResize = () => {
        if(canvasRef.current && containerRef.current) {
            const dpr = window.devicePixelRatio || 1;
            const rect = containerRef.current.getBoundingClientRect();
            canvasRef.current.width = rect.width * dpr;
            canvasRef.current.height = rect.height * dpr;
-           
-           // Trigger re-render of content
            setLines(prev => [...prev]); 
        }
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [notebookId]);
+
+  // -- UPDATED: LASER FADE ANIMATION LOOP --
+  useEffect(() => {
+    let animationTimer;
+    
+    // Only run the loop if we have laser lines to fade
+    if (laserLines.length > 0) {
+        animationTimer = setInterval(() => {
+            setLaserLines(prevLines => {
+                // Reduce opacity of every line by 0.02 (approx 50 frames to fade completely)
+                const fadedLines = prevLines.map(line => ({
+                    ...line,
+                    opacity: line.opacity - 0.02
+                }));
+
+                // Remove invisible lines
+                const visibleLines = fadedLines.filter(line => line.opacity > 0);
+                
+                // Stop the loop if everything is gone
+                if (visibleLines.length === 0 && prevLines.length === 0) return prevLines;
+                
+                return visibleLines;
+            });
+        }, 20); // Run every 20ms for smooth 50fps animation
+    }
+
+    return () => clearInterval(animationTimer);
+  }, [laserLines.length]); // Dependency on length ensures it starts when a new line is added
 
   // -- KEYBOARD SHORTCUTS --
   useEffect(() => {
@@ -100,6 +135,7 @@ const Whiteboard = ({ session }) => {
             case 'p': setTool('pen'); message.info("Pen"); break;
             case 'e': setTool('eraser'); message.info("Eraser"); break;
             case 'h': setTool('highlighter'); message.info("Highlighter"); break;
+            case 'l': setTool('laser'); message.info("Laser Pointer"); break;
         }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -116,13 +152,11 @@ const Whiteboard = ({ session }) => {
 
         if (data && data.length > 0) {
           setPages(data);
-          // Await this so the loader stays until the drawing appears
           await loadPageData(data[0].id);
         }
     } catch (error) {
         console.error("Error fetching pages:", error);
     } finally {
-        // Stop loading regardless of success/failure
         setLoadingInitial(false);
     }
   };
@@ -143,6 +177,7 @@ const Whiteboard = ({ session }) => {
         }
     }
     setSaving(false);
+    setHasUnsavedChanges(false); 
   };
 
   const saveCurrentPage = async (silent = false) => {
@@ -151,11 +186,39 @@ const Whiteboard = ({ session }) => {
     const currentPageId = pages[currentPageIndex].id;
     const { error } = await supabase.from('pages').update({ drawing_data: lines }).eq('id', currentPageId);
     setSaving(false);
-    if (error) message.error("Failed to save.");
-    else if (!silent) message.success("Saved");
+    if (error) {
+        message.error("Failed to save.");
+    } else {
+        if (!silent) message.success("Saved");
+        setHasUnsavedChanges(false);
+    }
   };
 
-  // -- SLIDE EFFECT TRANSITION --
+  const handleGoBack = () => {
+    if (!hasUnsavedChanges) {
+        navigate('/dashboard');
+        return;
+    }
+
+    Modal.confirm({
+        title: 'Unsaved Changes',
+        content: 'You have unsaved changes. Do you want to save them before leaving?',
+        okText: 'Save & Leave',
+        cancelText: 'Leave without saving',
+        centered: true,
+        closable: true,
+        onOk: async () => {
+            await saveCurrentPage(true);
+            navigate('/dashboard');
+        },
+        onCancel: (e) => {
+            if (!e?.triggerCancel) {
+                navigate('/dashboard'); 
+            }
+        }
+    });
+  };
+
   const triggerPageTransition = async (direction, callback) => {
     await saveCurrentPage(true);
     
@@ -287,9 +350,32 @@ const Whiteboard = ({ session }) => {
         ctx.drawImage(backgroundImage, 0, 0, width, height);
     }
 
+    // 1. Render Normal Lines
     lines.forEach(line => renderStroke(ctx, line.points, line.color, line.size, line.isHighlighter));
-    if (currentPoints) renderStroke(ctx, currentPoints, color, size, tool === 'highlighter');
-  }, [lines, currentPoints, color, size, tool, animClass, uiVisible, backgroundImage]);
+    
+    // 2. Render Normal Active Stroke
+    if (currentPoints && tool !== 'laser') {
+        renderStroke(ctx, currentPoints, color, size, tool === 'highlighter');
+    }
+
+    // 3. Render Laser Lines (With Glow & Opacity)
+    if (laserLines.length > 0 || (tool === 'laser' && currentPoints)) {
+        ctx.save();
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = '#ef4444'; // Red glow
+        
+        // Render fading laser trails
+        // Note: passing line.opacity to the render function
+        laserLines.forEach(line => renderStroke(ctx, line.points, '#ef4444', 6, false, line.opacity));
+        
+        // Render active laser stroke (full opacity)
+        if (tool === 'laser' && currentPoints) {
+            renderStroke(ctx, currentPoints, '#ef4444', 6, false, 1);
+        }
+        ctx.restore();
+    }
+
+  }, [lines, currentPoints, color, size, tool, animClass, uiVisible, backgroundImage, laserLines]);
 
   const getPoint = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -299,14 +385,20 @@ const Whiteboard = ({ session }) => {
   const handlePointerDown = (e) => {
     e.target.setPointerCapture(e.pointerId);
     const { x, y, pressure } = getPoint(e);
-    if (tool === 'eraser') setLines(prev => prev.filter(line => !checkCollision(line.points, x, y)));
+    if (tool === 'eraser') {
+        setLines(prev => prev.filter(line => !checkCollision(line.points, x, y)));
+        setHasUnsavedChanges(true); 
+    }
     else setCurrentPoints([[x, y, pressure]]);
   };
 
   const handlePointerMove = (e) => {
     if (e.buttons !== 1) return;
     const { x, y } = getPoint(e);
-    if (tool === 'eraser') setLines(prev => prev.filter(line => !checkCollision(line.points, x, y)));
+    if (tool === 'eraser') {
+        setLines(prev => prev.filter(line => !checkCollision(line.points, x, y)));
+        setHasUnsavedChanges(true); 
+    }
     else {
         const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
         const newPoints = events.map(ev => { const { x, y, pressure } = getPoint(ev); return [x, y, pressure]; });
@@ -316,19 +408,26 @@ const Whiteboard = ({ session }) => {
 
   const handlePointerUp = () => {
     if (currentPoints) {
-      setLines([...lines, { points: currentPoints, color, size, isHighlighter: tool === 'highlighter' }]);
+      if (tool === 'laser') {
+         // --- LASER LOGIC: Add with starting opacity 1 ---
+         setLaserLines(prev => [...prev, { points: currentPoints, opacity: 1 }]);
+      } else {
+         setLines([...lines, { points: currentPoints, color, size, isHighlighter: tool === 'highlighter' }]);
+         setHasUnsavedChanges(true);
+      }
       setCurrentPoints(null);
     }
   };
 
   const pencilCursorStyle = {
-    cursor: `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>') 0 24, auto`
+    cursor: tool === 'laser' 
+      ? 'crosshair' 
+      : `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>') 0 24, auto`
   };
 
   return (
     <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh', backgroundColor: '#e0e0e0', touchAction: 'none' }}>
       
-      {/* --- ADDITION 1: INITIAL LOADING SCREEN --- */}
       {loadingInitial && (
          <div className="fixed inset-0 z-[100] bg-[#e0e0e0] flex items-center justify-center">
             <div className="flex flex-col items-center gap-4 animate-in fade-in duration-500">
@@ -338,15 +437,12 @@ const Whiteboard = ({ session }) => {
          </div>
       )}
 
-      {/* --- ADDITION 2: COMPANY LOGO PLACEHOLDER --- */}
-      {/* Positioned Top-Left, Hides when Focus Mode is ON */}
       <div 
         className={`fixed top-6 left-6 z-[60] transition-all duration-500 ${uiVisible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-10 pointer-events-none'}`}
       >
-        {/* Replace this div with your <img> tag */}
         <div className="h-16 w-16 flex items-center justify-center text-white font-bold text-xs select-none">
                 <img src='/introos.svg' alt='logo'/>
-            </div>
+        </div>
       </div>
 
       {/* 1. FLOATING TOOLBAR */}
@@ -355,7 +451,7 @@ const Whiteboard = ({ session }) => {
             
             {/* Navigation */}
             <div className="flex items-center gap-2 pr-4 border-r border-gray-300/50">
-                 <button onClick={() => navigate('/dashboard')} className="p-2.5 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition"><ArrowLeft size={20} /></button>
+                 <button onClick={handleGoBack} className="p-2.5 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition"><ArrowLeft size={20} /></button>
                  <div className="flex bg-gray-100/50 rounded-lg p-1">
                      <button onClick={handlePrevPage} disabled={currentPageIndex === 0} className="p-1.5 rounded-md text-gray-500 hover:bg-white hover:shadow-sm disabled:opacity-30 transition"><ChevronLeft size={18} /></button>
                      <span className="font-medium text-xs w-12 flex items-center justify-center text-gray-600 select-none">{currentPageIndex + 1} / {pages.length}</span>
@@ -368,6 +464,10 @@ const Whiteboard = ({ session }) => {
             <div className="flex gap-1 pr-4 border-r border-gray-300/50">
                 <button title="Pencil (P)" className={`p-2.5 rounded-xl transition-all ${tool === 'pen' ? 'bg-black text-white shadow-md scale-105' : 'text-gray-500 hover:bg-gray-100'}`} onClick={() => setTool('pen')}><Pen size={20} /></button>
                 <button title="Highlighter (H)" className={`p-2.5 rounded-xl transition-all ${tool === 'highlighter' ? 'bg-yellow-100 text-yellow-600 shadow-sm scale-105 ring-1 ring-yellow-200' : 'text-gray-500 hover:bg-gray-100'}`} onClick={() => setTool('highlighter')}><Highlighter size={20} /></button>
+                
+                {/* --- LASER BUTTON --- */}
+                <button title="Laser Pointer (L)" className={`p-2.5 rounded-xl transition-all ${tool === 'laser' ? 'bg-red-100 text-red-600 shadow-sm scale-105 ring-1 ring-red-200' : 'text-gray-500 hover:bg-gray-100'}`} onClick={() => setTool('laser')}><Zap size={20} /></button>
+                
                 <button title="Eraser (E)" className={`p-2.5 rounded-xl transition-all ${tool === 'eraser' ? 'bg-pink-100 text-pink-600 shadow-sm scale-105 ring-1 ring-pink-200' : 'text-gray-500 hover:bg-gray-100'}`} onClick={() => setTool('eraser')}><Eraser size={20} /></button>
             </div>
 

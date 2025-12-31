@@ -6,6 +6,38 @@ import Whiteboard from './Whiteboard';
 import { message } from 'antd';
 import { Loader2 } from 'lucide-react';
 
+// --- NEW: SPLASH SCREEN COMPONENT ---
+const SplashScreen = () => {
+  return (
+    <div className="fixed inset-0 z-[9999] bg-[#F5F5F7] flex flex-col items-center justify-center transition-opacity duration-700">
+      <div className="flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-700">
+        
+        {/* Logo Animation */}
+        <div className="h-24 w-24 bg-white rounded-3xl shadow-xl flex items-center justify-center mb-4 overflow-hidden border border-gray-100">
+           <img src='/introos.svg' alt='Logo' className="w-16 h-16 object-contain animate-pulse" />
+        </div>
+
+        {/* Brand Text */}
+        <div className="text-center space-y-2">
+            <h1 className="text-3xl font-extrabold text-[#1a1a1a] tracking-tight">Noteese</h1>
+            <div className="flex items-center justify-center gap-2">
+                <span className="h-px w-6 bg-gray-300"></span>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">By Btechified</p>
+                <span className="h-px w-6 bg-gray-300"></span>
+            </div>
+        </div>
+
+      </div>
+      
+      {/* Footer / Loader */}
+      <div className="absolute bottom-10 flex flex-col items-center gap-2">
+          <Loader2 className="animate-spin text-gray-400" size={20} />
+          <p className="text-[10px] text-gray-400 font-medium">Loading your workspace...</p>
+      </div>
+    </div>
+  );
+};
+
 // -- LOGIN COMPONENT --
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -82,26 +114,33 @@ const App = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    const initApp = async () => {
+      // 1. Start the minimum timer (2 seconds for splash screen)
+      const minLoadTime = new Promise((resolve) => setTimeout(resolve, 2000));
+      
+      // 2. Start the Session Check
+      const sessionCheck = supabase.auth.getSession();
+
+      // 3. Wait for BOTH to finish
+      // This ensures the splash screen shows for at least 2 seconds, even if auth is instant.
+      const [_, { data }] = await Promise.all([minLoadTime, sessionCheck]);
+
+      setSession(data.session);
       setLoading(false);
-    });
+    };
+
+    initApp();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
+  // --- SHOW SPLASH SCREEN WHILE LOADING ---
   if (loading) {
-      return (
-         <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#F5F5F7] gap-4">
-            <Loader2 className="animate-spin text-gray-800" size={40} />
-            <p className="text-gray-500 font-medium animate-pulse">Initializing App...</p>
-         </div>
-      );
+      return <SplashScreen />;
   }
 
   return (
