@@ -5,19 +5,17 @@ import Dashboard from './Dashboard';
 import Whiteboard from './Whiteboard';
 import { message } from 'antd';
 import { Loader2 } from 'lucide-react';
+import Profile from './Profile';
+import Controller from './Controller';
 
-// --- NEW: SPLASH SCREEN COMPONENT ---
+// --- SPLASH SCREEN COMPONENT (Unchanged) ---
 const SplashScreen = () => {
   return (
-    <div className="fixed inset-0 z-[9999] bg-[#F5F5F7] flex flex-col items-center justify-center transition-opacity duration-700">
-      <div className="flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-700">
-        
-        {/* Logo Animation */}
+    <div className="fixed inset-0 z-[9999] bg-[#F5F5F7] flex flex-col items-center justify-center">
+      <div className="flex flex-col items-center gap-4 animate-pulse">
         <div className="h-24 w-24 bg-white rounded-3xl shadow-xl flex items-center justify-center mb-4 overflow-hidden border border-gray-100">
-           <img src='/introos.svg' alt='Logo' className="w-16 h-16 object-contain animate-pulse" />
+           <img src='/introos.svg' alt='Logo' className="w-16 h-16 object-contain" />
         </div>
-
-        {/* Brand Text */}
         <div className="text-center space-y-2">
             <h1 className="text-3xl font-extrabold text-[#1a1a1a] tracking-tight">Noteese</h1>
             <div className="flex items-center justify-center gap-2">
@@ -26,10 +24,7 @@ const SplashScreen = () => {
                 <span className="h-px w-6 bg-gray-300"></span>
             </div>
         </div>
-
       </div>
-      
-      {/* Footer / Loader */}
       <div className="absolute bottom-10 flex flex-col items-center gap-2">
           <Loader2 className="animate-spin text-gray-400" size={20} />
           <p className="text-[10px] text-gray-400 font-medium">Loading your workspace...</p>
@@ -38,7 +33,7 @@ const SplashScreen = () => {
   );
 };
 
-// -- LOGIN COMPONENT --
+// -- LOGIN COMPONENT (With Native CSS Fade Animation) --
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -66,65 +61,105 @@ const Login = () => {
   };
 
   return (
-    <div className="flex items-center justify-center h-screen bg-[#F5F5F7]">
+    // --- ADDED: style prop for native animation ---
+    <div 
+      className="flex h-screen w-full bg-white overflow-hidden"
+      style={{ animation: 'fadeIn 1.2s ease-out forwards' }}
+    >
+      {/* --- ADDED: Keyframes definition --- */}
+      <style>
+        {`
+          @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.98); }
+            to { opacity: 1; transform: scale(1); }
+          }
+        `}
+      </style>
+
       {contextHolder}
-      <form onSubmit={handleLogin} className="p-10 bg-white rounded-2xl shadow-xl w-96 border border-gray-100">
+      
+      {/* --- LEFT SIDE: FORM --- */}
+      <div className="w-full lg:w-1/2 flex flex-col justify-center px-8 sm:px-12 lg:px-24 relative z-10">
         
-        {/* LOGO PLACEHOLDER (Login Screen Version) */}
-        <div className="flex justify-center mb-8">
-            <div className="h-16 w-16 flex items-center justify-center text-white font-bold text-xs select-none">
-                <img src='/introos.svg' alt='logo'/>
+        {/* Top Left Brand */}
+        <div className="absolute top-10 left-10 flex items-center gap-2">
+             <img src='/introos.svg' alt='logo' className="h-6 w-6 object-contain"/>
+             <span className="font-bold text-lg tracking-tight text-gray-900">Noteese</span>
+        </div>
+
+        <div className="max-w-sm w-full mx-auto">
+            
+            {/* Centered Logo Icon */}
+            <div className="flex justify-center mb-8">
+                <img src='/introos.svg' alt='logo' className="h-10 w-10 object-contain"/>
             </div>
-        </div>
 
-        <h2 className="mb-2 text-2xl font-extrabold text-gray-900 text-center">Welcome Back</h2>
-        <p className="mb-8 text-gray-500 text-center text-sm">Enter your details to access your notebooks.</p>
-        
-        <div className="space-y-4">
-            <input 
-                type="email" 
-                placeholder="Email address" 
-                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-gray-700 placeholder:text-gray-400" 
-                value={email} 
-                onChange={(e) => setEmail(e.target.value)} 
-            />
-            <input 
-                type="password" 
-                placeholder="Password" 
-                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-gray-700 placeholder:text-gray-400" 
-                value={password} 
-                onChange={(e) => setPassword(e.target.value)} 
-            />
-        </div>
+            <div className="text-center mb-10">
+                <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Welcome back</h2>
+                <p className="text-gray-400 text-sm mt-2">Please enter your details to continue.</p>
+            </div>
 
-        <button 
-            disabled={loading} 
-            className="w-full mt-8 p-3.5 text-white bg-[#1a1a1a] hover:bg-black rounded-xl font-bold shadow-lg shadow-gray-200 hover:shadow-xl hover:-translate-y-0.5 transition-all disabled:opacity-70 disabled:cursor-not-allowed flex justify-center items-center gap-2"
-        >
-            {loading ? <Loader2 className="animate-spin" size={20} /> : 'Continue'}
-        </button>
-      </form>
+            <form onSubmit={handleLogin} className="space-y-4">
+                <div className="space-y-4">
+                    <input 
+                        type="email" 
+                        placeholder="Enter email or username" 
+                        className="w-full px-6 py-4 bg-transparent border border-gray-200 rounded-full outline-none focus:border-black focus:ring-1 focus:ring-black transition-all text-gray-800 placeholder:text-gray-400 font-medium" 
+                        value={email} 
+                        onChange={(e) => setEmail(e.target.value)} 
+                        required
+                    />
+                    <input 
+                        type="password" 
+                        placeholder="Password" 
+                        className="w-full px-6 py-4 bg-transparent border border-gray-200 rounded-full outline-none focus:border-black focus:ring-1 focus:ring-black transition-all text-gray-800 placeholder:text-gray-400 font-medium" 
+                        value={password} 
+                        onChange={(e) => setPassword(e.target.value)} 
+                        required
+                    />
+                </div>
+
+                <button 
+                    disabled={loading} 
+                    className="w-full py-4 mt-6 text-white bg-[#0f0f0f] hover:bg-black rounded-full font-bold text-sm tracking-wide shadow-xl shadow-gray-200/50 hover:shadow-2xl hover:scale-[1.01] transition-all disabled:opacity-70 disabled:cursor-not-allowed flex justify-center items-center gap-2"
+                >
+                    {loading ? <Loader2 className="animate-spin" size={18} /> : 'Continue'}
+                </button>
+                
+                {/* Subtle disclaimer */}
+                <p className="text-center text-[10px] text-gray-300 mt-8">
+                   Protected by Supabase Secure Auth
+                </p>
+            </form>
+        </div>
+      </div>
+
+      {/* --- RIGHT SIDE: VISUAL --- */}
+      <div className="hidden lg:block w-1/2 p-4 bg-[#bbbdb4]"> 
+         <div className="w-full h-full rounded-3xl overflow-hidden relative shadow-inner">
+             <img 
+                src="https://images.unsplash.com/photo-1726594703316-fc9f35c7d80f?q=80&w=2564&auto=format&fit=crop" 
+                alt="Abstract Login Visual" 
+                className="w-full h-full object-cover"
+             />
+             <div className="absolute inset-0 bg-black/5 pointer-events-none"></div>
+         </div>
+      </div>
     </div>
   );
 };
 
-// -- MAIN APP SHELL --
+// -- MAIN APP SHELL (Unchanged) --
 const App = () => {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const initApp = async () => {
-      // 1. Start the minimum timer (2 seconds for splash screen)
+      // Keep splash screen for at least 2 seconds
       const minLoadTime = new Promise((resolve) => setTimeout(resolve, 2000));
-      
-      // 2. Start the Session Check
       const sessionCheck = supabase.auth.getSession();
-
-      // 3. Wait for BOTH to finish
-      // This ensures the splash screen shows for at least 2 seconds, even if auth is instant.
       const [_, { data }] = await Promise.all([minLoadTime, sessionCheck]);
-
       setSession(data.session);
       setLoading(false);
     };
@@ -138,7 +173,6 @@ const App = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  // --- SHOW SPLASH SCREEN WHILE LOADING ---
   if (loading) {
       return <SplashScreen />;
   }
@@ -150,6 +184,11 @@ const App = () => {
         <Route path="/dashboard" element={session ? <Dashboard session={session} /> : <Navigate to="/login" />} />
         <Route path="/notebook/:notebookId" element={session ? <Whiteboard session={session} /> : <Navigate to="/login" />} />
         <Route path="*" element={<Navigate to={session ? "/dashboard" : "/login"} />} />
+<Route 
+  path="/profile" 
+  element={session ? <Profile session={session} /> : <Navigate to="/login" />} 
+/>
+<Route path="/controller/:code" element={<Controller />} />
       </Routes>
     </Router>
   );

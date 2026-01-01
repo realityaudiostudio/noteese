@@ -2,22 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
-import { Book, Plus, LogOut, Trash2, FileUp, Loader2, Crown } from 'lucide-react'; // Added Crown icon
-import { 
-  S3Client, 
-  PutObjectCommand, 
-  ListObjectsV2Command,
-  DeleteObjectsCommand
-} from "@aws-sdk/client-s3";
-
+import { Book, Plus, LogOut, Trash2, FileUp, Loader2, Crown, User, Smartphone } from 'lucide-react'; 
 // --- Ant Design Imports ---
-import { Modal, message } from 'antd';
+import { Modal, message, Input } from 'antd'; 
 
 // --- PDF Worker ---
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 
 // --- R2 CONFIGURATION ---
-const R2_BUCKET_NAME = "varapage";
 const R2_PUBLIC_DOMAIN = "https://files.btechified.in"; 
 
 const Dashboard = ({ session }) => {
@@ -26,9 +18,13 @@ const Dashboard = ({ session }) => {
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(''); 
   
-  // -- NEW: State for Premium Status --
+  // -- State for Premium Status --
   const [isPremium, setIsPremium] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
+
+  // --- State for Join Code (Controller Mode) ---
+  const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
 
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
@@ -68,7 +64,7 @@ const Dashboard = ({ session }) => {
 
   // --- HELPER: CHECK LIMIT ---
   const checkLimit = () => {
-    if (isPremium) return true; // Premium users have no limit
+    if (isPremium) return true; 
     if (notebooks.length >= 3) {
         Modal.warning({
             title: 'Limit Reached (3/3)',
@@ -81,8 +77,7 @@ const Dashboard = ({ session }) => {
             okText: 'Upgrade Now',
             maskClosable: true,
             onOk: () => {
-                // Logic to redirect to payment page goes here
-                window.open('https://your-payment-link.com', '_blank');
+                // Payment redirect logic here
             }
         });
         return false;
@@ -94,7 +89,6 @@ const Dashboard = ({ session }) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
 
-    // 1. Check Limit
     if (!checkLimit()) return;
 
     const { data: notebook } = await supabase.from('notebooks').insert([{ user_id: session.user.id, title: newTitle }]).select().single();
@@ -118,27 +112,25 @@ const Dashboard = ({ session }) => {
       centered: true,
       onOk: async () => {
         try {
-          const response = await fetch('/api/delete-notebook', {
+          // Optional: Call your backend API to delete files from R2
+          await fetch('/api/delete-notebook', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              userId: session.user.id, 
-              notebookId: notebookId 
-            }),
+            body: JSON.stringify({ userId: session.user.id, notebookId: notebookId }),
           });
-
-          if (!response.ok) throw new Error("Failed to delete files");
 
           await supabase.from('notebooks').delete().eq('id', notebookId);
           
-          // Refresh list manually to avoid full reload
           const { data } = await supabase.from('notebooks').select('*').order('created_at', { ascending: false });
           setNotebooks(data);
           
           messageApi.success('Notebook deleted successfully');
         } catch (error) {
           console.error("Error deleting notebook:", error);
-          messageApi.error("Failed to delete notebook fully.");
+          // Even if file deletion fails, remove from DB
+          await supabase.from('notebooks').delete().eq('id', notebookId);
+          const { data } = await supabase.from('notebooks').select('*').order('created_at', { ascending: false });
+          setNotebooks(data);
         }
       }
     });
@@ -165,9 +157,8 @@ const Dashboard = ({ session }) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // 1. Check Limit BEFORE doing any heavy processing
     if (!checkLimit()) {
-        e.target.value = null; // Reset file input
+        e.target.value = null; 
         return;
     }
 
@@ -218,7 +209,6 @@ const Dashboard = ({ session }) => {
       setImportProgress('Saving to database...');
       await supabase.from('pages').insert(pagesPayload);
       
-      // Refresh list
       const { data } = await supabase.from('notebooks').select('*').order('created_at', { ascending: false });
       setNotebooks(data);
       
@@ -232,6 +222,16 @@ const Dashboard = ({ session }) => {
       setImportProgress('');
       if(fileInputRef.current) fileInputRef.current.value = null;
     }
+  };
+
+  // --- HANDLE JOIN SESSION (Fixed for 4-Char Code) ---
+  const handleJoinSession = () => {
+    if (!joinCode || joinCode.length < 4) {
+        messageApi.error("Please enter the 4-character code");
+        return;
+    }
+    // Navigate to the controller page with the code
+    navigate(`/controller/${joinCode.toUpperCase()}`);
   };
 
   return (
@@ -248,12 +248,31 @@ const Dashboard = ({ session }) => {
          </div>
       )}
 
+      {/* --- JOIN CODE MODAL --- */}
+      <Modal 
+        title="Connect Phone as Tablet" 
+        open={isJoinModalOpen} 
+        onCancel={() => setIsJoinModalOpen(false)}
+        footer={[
+            <button key="back" onClick={() => setIsJoinModalOpen(false)} className="px-4 py-2 text-gray-500 font-medium hover:text-gray-700">Cancel</button>,
+            <button key="submit" onClick={handleJoinSession} className="ml-2 px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700">Connect</button>
+        ]}
+        centered
+      >
+        <div className="py-4 text-center">
+            <p className="text-gray-500 mb-4 text-sm">Enter the 4-character code displayed on your PC screen.</p>
+            <div className="flex justify-center">
+                {/* Changed to length 4 to match Whiteboard code */}
+                <Input.OTP length={4} value={joinCode} onChange={setJoinCode} size="large" formatter={(str) => str.toUpperCase()} />
+            </div>
+        </div>
+      </Modal>
+
       <div className="max-w-[1200px] mx-auto">
         
         {/* HEADER SECTION */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-10 gap-4">
           <div>
-            {/* --- LOGO --- */}
             <div className="h-16 w-16 flex items-center justify-center text-white font-bold text-xs select-none mb-2">
                 <img src='/introos.svg' alt='logo' className="w-full h-full object-contain"/>
             </div>
@@ -267,7 +286,6 @@ const Dashboard = ({ session }) => {
                 )}
             </div>
             
-            {/* LIMIT INDICATOR (Only for Free users) */}
             {!isPremium && (
                 <div className="flex items-center gap-2 mt-1">
                     <p className="text-gray-500 font-medium">Free Plan: {notebooks.length} / 3 Notebooks used</p>
@@ -276,14 +294,23 @@ const Dashboard = ({ session }) => {
             )}
           </div>
           
-          <button 
-            onClick={() => supabase.auth.signOut()} 
-            className="bg-[#1a1a1a] hover:bg-black text-white px-5 py-2.5 rounded-lg transition-all flex items-center gap-2 font-medium text-sm shadow-sm active:scale-95 flex-shrink-0"
-          >
-            <LogOut size={18} className="flex-shrink-0" /> <span>Sign Out</span>
-          </button>
-        </div>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => navigate('/profile')} 
+              className="bg-white text-[#1a1a1a] border border-gray-200 hover:bg-gray-50 px-5 py-2.5 rounded-lg transition-all flex items-center gap-2 font-medium text-sm shadow-sm active:scale-95 flex-shrink-0"
+            >
+              <User size={18} className="flex-shrink-0" /> <span>Profile</span>
+            </button>
 
+            <button 
+                onClick={() => supabase.auth.signOut()} 
+                className="bg-[#1a1a1a] hover:bg-black text-white px-5 py-2.5 rounded-lg transition-all flex items-center gap-2 font-medium text-sm shadow-sm active:scale-95 flex-shrink-0"
+            >
+                <LogOut size={18} className="flex-shrink-0" /> <span>Sign Out</span>
+            </button>
+          </div>
+        </div>
+        
         {/* CONTROLS SECTION */}
         <div className="flex flex-col md:flex-row gap-4 mb-10">
           
@@ -298,28 +325,38 @@ const Dashboard = ({ session }) => {
             />
             <button 
               type="submit" 
-              // Disable visually if limit reached (optional, since logic blocks it anyway)
               className={`px-6 py-2.5 rounded-xl transition-colors font-semibold flex items-center gap-2 text-sm shadow-sm whitespace-nowrap flex-shrink-0 ${!isPremium && notebooks.length >= 3 ? 'bg-gray-400 cursor-not-allowed text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
             >
               <Plus size={20} className="flex-shrink-0" /> New
             </button>
           </form>
 
-          {/* Import Button */}
-          <div className="md:w-auto w-full">
-            <input type="file" accept="application/pdf" ref={fileInputRef} className="hidden" onChange={handlePdfImport} />
+          <div className="flex gap-4 md:w-auto w-full">
+            {/* Join Code Button */}
             <button 
-              onClick={() => fileInputRef.current.click()}
-              disabled={isImporting}
-              className={`w-full h-full px-6 py-3 border rounded-2xl flex items-center justify-center gap-2.5 transition-all font-semibold text-sm shadow-sm whitespace-nowrap ${!isPremium && notebooks.length >= 3 ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300'}`}
+                onClick={() => setIsJoinModalOpen(true)}
+                className="flex-1 md:flex-none px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-2xl flex items-center justify-center gap-2 transition-all font-semibold text-sm shadow-sm whitespace-nowrap"
             >
-              {isImporting ? (
-                <Loader2 className="animate-spin text-blue-600 flex-shrink-0" size={20}/>
-              ) : (
-                <FileUp size={20} className="flex-shrink-0" />
-              )}
-              <span>{isImporting ? importProgress : "Import PDF"}</span>
+                <Smartphone size={20} />
+                <span>Connect Phone</span>
             </button>
+
+            {/* Import Button */}
+            <div className="relative">
+                <input type="file" accept="application/pdf" ref={fileInputRef} className="hidden" onChange={handlePdfImport} />
+                <button 
+                onClick={() => fileInputRef.current.click()}
+                disabled={isImporting}
+                className={`h-full px-6 py-3 border rounded-2xl flex items-center justify-center gap-2.5 transition-all font-semibold text-sm shadow-sm whitespace-nowrap ${!isPremium && notebooks.length >= 3 ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300'}`}
+                >
+                {isImporting ? (
+                    <Loader2 className="animate-spin text-blue-600 flex-shrink-0" size={20}/>
+                ) : (
+                    <FileUp size={20} className="flex-shrink-0" />
+                )}
+                <span>{isImporting ? importProgress : "Import PDF"}</span>
+                </button>
+            </div>
           </div>
         </div>
 
