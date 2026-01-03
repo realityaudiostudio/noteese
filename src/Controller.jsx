@@ -46,6 +46,9 @@ const Controller = () => {
   const remoteSizeRef = useRef({ w: 1000, h: 1000 }); 
 
   const transformRef = useRef({ x: 0, y: 0, k: 1 });
+  // FIX: Add a ref to track if we have done the initial view sync
+  const hasSyncedRef = useRef(false);
+
   const strokesRef = useRef([]); 
   const laserLinesRef = useRef([]);
   const currentStrokeRef = useRef([]);
@@ -80,12 +83,20 @@ const Controller = () => {
                 const { strokes, backgroundImage, tool, color, size, zoom, pan, dimensions } = data.payload;
                 
                 strokesRef.current = strokes || [];
+                // Optional: You might want to remove these if you want independent tools too
+                // But usually, syncing tools is fine.
                 if (tool) setTool(tool);
                 if (color) setColor(color);
                 if (size) setSize(size);
                 
-                if (zoom) transformRef.current.k = zoom;
-                if (pan) { transformRef.current.x = pan.x; transformRef.current.y = pan.y; }
+                // --- FIX: VIEW SYNC LOGIC ---
+                // Only sync the View (Zoom/Pan) the FIRST time we connect.
+                // This prevents the "Jump" when you draw, allowing you to stay zoomed in locally.
+                if (!hasSyncedRef.current) {
+                    if (zoom) transformRef.current.k = zoom;
+                    if (pan) { transformRef.current.x = pan.x; transformRef.current.y = pan.y; }
+                    hasSyncedRef.current = true;
+                }
                 
                 // --- SYNC DIMENSIONS (FIXES GAP) ---
                 if (dimensions) {
@@ -134,32 +145,37 @@ const Controller = () => {
     const container = containerRef.current;
     if (!canvas || !container) return;
 
+    // Safety: Ensure Transform is valid
+    if (!transformRef.current.k || transformRef.current.k <= 0) transformRef.current.k = 1;
+
     const dpr = window.devicePixelRatio || 1;
     const rect = container.getBoundingClientRect();
+    
+    // Safety: Ensure container has size
+    if (rect.width === 0 || rect.height === 0) return;
+
     if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
-        canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
-        canvas.style.width = `${rect.width}px`; canvas.style.height = `${rect.height}px`;
+        canvas.width = rect.width * dpr; 
+        canvas.height = rect.height * dpr;
+        canvas.style.width = `${rect.width}px`; 
+        canvas.style.height = `${rect.height}px`;
     }
 
     const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr); ctx.clearRect(0, 0, rect.width, rect.height);
+    ctx.scale(dpr, dpr); 
+    ctx.clearRect(0, 0, rect.width, rect.height);
     
-    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, rect.width, rect.height);
+    ctx.fillStyle = '#ffffff'; 
+    ctx.fillRect(0, 0, rect.width, rect.height);
 
     // --- RENDER BACKGROUND MATCHING PC DIMENSIONS ---
     if (backgroundRef.current) {
         ctx.save();
         const img = backgroundRef.current;
-        // PC simply stretches img to fill "containerWidth x containerHeight".
-        // We simulate that "container" here as "remoteSizeRef".
-        // World coordinates are pixels relative to that PC container.
-        
         const renderW = remoteSizeRef.current.w * transformRef.current.k;
         const renderH = remoteSizeRef.current.h * transformRef.current.k;
-        
         const renderX = transformRef.current.x; 
         const renderY = transformRef.current.y;
-
         ctx.drawImage(img, renderX, renderY, renderW, renderH);
         ctx.restore();
     }
@@ -171,30 +187,70 @@ const Controller = () => {
         drawStroke(ctx, {
             points: currentStrokeRef.current,
             color: tool === 'eraser' ? 'rgba(255,0,0,0.1)' : (tool === 'laser' ? '#ef4444' : color),
-            size: size, tool: tool, isHighlighter: tool === 'highlighter', isLaser: tool === 'laser'
+            size: size, 
+            tool: tool, 
+            isHighlighter: tool === 'highlighter', 
+            isLaser: tool === 'laser'
         });
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0); 
   };
 
   const drawStroke = (ctx, stroke) => {
-      if (stroke.points.length < 2) return;
+      // FIX 1: Allow single points (dots) to be drawn. 
+      if (stroke.points.length === 0) return; 
+
       const screenPoints = stroke.points.map(p => {
           const px = Array.isArray(p) ? p[0] : p.x;
           const py = Array.isArray(p) ? p[1] : p.y;
-          const pr = Array.isArray(p) ? p[2] : (p.pressure || 0.5);
+          // FIX 2: Default pressure to 0.5 if missing
+          const pr = Array.isArray(p) ? p[2] : (p.pressure ?? 0.5);
           const s = toScreen(px, py);
           return [s.x, s.y, pr];
       });
-      const renderSize = stroke.size * transformRef.current.k;
-      const outlinePoints = getStroke(screenPoints, { size: renderSize, thinning: 0.5, smoothing: 0.5, streamline: 0.5, simulatePressure: true, last: stroke.points.length === 1 });
+
+      // FIX 3: Ensure zoom (k) is never 0 or NaN to prevent invisible lines
+      const currentK = transformRef.current.k || 1;
+      const renderSize = stroke.size * currentK;
+      
+      const outlinePoints = getStroke(screenPoints, { 
+          size: renderSize, 
+          thinning: 0.5, 
+          smoothing: 0.5, 
+          streamline: 0.5, 
+          simulatePressure: true, 
+          // FIX 4: Correctly tell library if this is a finished stroke or active one
+          last: stroke.points.length === 1 || stroke.tool !== 'pen' 
+      });
+
       const pathData = getSvgPathFromStroke(outlinePoints);
+      
       ctx.save();
-      if (stroke.tool === 'eraser') { ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = 'rgba(0,0,0,1)'; } 
-      else if (stroke.isLaser) { ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = stroke.color; ctx.globalAlpha = stroke.opacity ?? 1; ctx.shadowColor = stroke.color; ctx.shadowBlur = 15; } 
-      else if (stroke.isHighlighter || stroke.tool === 'highlighter') { ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = stroke.color; ctx.globalAlpha = 0.5; } 
-      else { ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = stroke.color; ctx.globalAlpha = 1; }
-      const path = new Path2D(pathData); ctx.fill(path); ctx.restore();
+      if (stroke.tool === 'eraser') { 
+          ctx.globalCompositeOperation = 'destination-out'; 
+          ctx.fillStyle = 'rgba(0,0,0,1)'; 
+      } 
+      else if (stroke.isLaser) { 
+          ctx.globalCompositeOperation = 'source-over'; 
+          ctx.fillStyle = stroke.color; 
+          ctx.globalAlpha = stroke.opacity ?? 1; 
+          ctx.shadowColor = stroke.color; 
+          ctx.shadowBlur = 15; 
+      } 
+      else if (stroke.isHighlighter || stroke.tool === 'highlighter') { 
+          ctx.globalCompositeOperation = 'multiply'; 
+          ctx.fillStyle = stroke.color; 
+          ctx.globalAlpha = 0.5; 
+      } 
+      else { 
+          ctx.globalCompositeOperation = 'source-over'; 
+          ctx.fillStyle = stroke.color; 
+          ctx.globalAlpha = 1; 
+      }
+      
+      const path = new Path2D(pathData); 
+      ctx.fill(path); 
+      ctx.restore();
   };
 
   const sendSocket = (type, x, y, pressure) => {

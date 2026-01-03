@@ -122,6 +122,38 @@ const Whiteboard = ({ session }) => {
     });
   }, [tool, color, size]);
 
+  // -- 1.5 BROADCAST BOARD STATE (FIX: Syncs Page Changes & PC Drawing) --
+  useEffect(() => {
+    if (!peerRef.current) return;
+    
+    // Safety check for container
+    const rect = containerRef.current ? containerRef.current.getBoundingClientRect() : { width: 1000, height: 1000 };
+    const bgData = backgroundImage ? backgroundImage.src : null;
+
+    const payload = {
+        type: 'sync_board',
+        payload: { 
+            strokes: lines, // Send current lines
+            backgroundImage: bgData, // Send current BG
+            tool: tool, 
+            color: color, 
+            size: size,
+            zoom: zoom, 
+            pan: pan,
+            dimensions: { w: rect.width, h: rect.height }
+        }
+    };
+
+    const connections = peerRef.current.connections;
+    Object.keys(connections).forEach(key => {
+        connections[key].forEach(conn => {
+            if (conn.open) {
+                conn.send(payload);
+            }
+        });
+    });
+  }, [lines, backgroundImage, zoom, pan]); // Triggers on Page Change (lines/bg update) or PC Drawing (lines update)
+
   // -- 2. PEERJS SETUP (LOCAL WIFI) --
   const startLocalConnection = () => {
       const uniqueId = Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -136,17 +168,15 @@ const Whiteboard = ({ session }) => {
       peer.on('open', (id) => { console.log('Host ID:', id); });
 
       peer.on('connection', (conn) => {
-          setPhoneStatus('Phone Connected!');
+          // --- CHANGE: Capture Connected Peer ID ---
+          setPhoneStatus(`Connected to: ${conn.peer}`);
           message.success('Phone Connected!');
           setIsPhoneModalOpen(false); 
 
           // SEND INITIAL STATE
           setTimeout(() => {
               if(conn.open) {
-                  // Capture current PC canvas dimensions to send to mobile
-                  // This ensures mobile renders the "World" exactly same size as PC
                   const rect = containerRef.current.getBoundingClientRect();
-                  
                   const bgData = backgroundImage ? backgroundImage.src : null;
                   conn.send({
                       type: 'sync_board',
@@ -158,7 +188,7 @@ const Whiteboard = ({ session }) => {
                           size: sizeRef.current,
                           zoom: zoomRef.current, 
                           pan: panRef.current,
-                          dimensions: { w: rect.width, h: rect.height } // <--- CRITICAL FIX
+                          dimensions: { w: rect.width, h: rect.height } 
                       }
                   });
               }
@@ -190,8 +220,6 @@ const Whiteboard = ({ session }) => {
      if (data.color) setColor(data.color);
      if (data.size) setSize(data.size);
 
-     // --- COORDINATE FIX: Receive Raw World Coordinates ---
-     // We no longer calculate relative to screen size here, we trust the controller.
      const worldX = data.x;
      const worldY = data.y;
      const pressure = data.pressure || 0.5;
@@ -514,8 +542,14 @@ const Whiteboard = ({ session }) => {
                     <button onClick={() => setZoom(z => Math.min(z + 0.1, 3))} className="p-2.5 text-gray-500 hover:bg-gray-100 rounded-xl"><ZoomIn size={18}/></button>
                 </div>
                 <div className="flex gap-1">
-                    {/* <button onClick={() => fileInputRef.current.click()} title="Set Background" className="p-2.5 text-gray-500 hover:text-orange-600 hover:bg-orange-50 rounded-xl"><ImageIcon size={20} /></button> */}
-                    <button onClick={startLocalConnection} title="Phone Tablet" className="p-2.5 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-xl"><Smartphone size={20} /></button>
+                    {/* --- UPDATED SMARTPHONE BUTTON --- */}
+                    <button 
+                        onClick={startLocalConnection} 
+                        title={phoneStatus.includes('Connected') ? phoneStatus : "Connect Phone (Tablet Mode)"} 
+                        className={`p-2.5 rounded-xl transition-all ${phoneStatus.includes('Connected') ? 'text-green-600 bg-green-50 ring-1 ring-green-200' : 'text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}
+                    >
+                        <Smartphone size={20} />
+                    </button>
                     <button onClick={() => window.open(`${window.location.origin}/notebook/${notebookId}?mode=presenter`,'Presenter','width=800,height=600')} title="Presenter View" className="p-2.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl"><Monitor size={20} /></button>
                     <button onClick={() => saveCurrentPage(false)} className="p-2.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl">{saving ? <Loader2 className="animate-spin" size={20}/> : <Save size={20} />}</button>
                     <button onClick={downloadAllPagesPDF} className="p-2.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-xl"><Download size={20} /></button>
