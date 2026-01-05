@@ -247,7 +247,7 @@ const Dashboard = ({ session }) => {
             </div>
          </div>
       )}
-
+        
       {/* --- JOIN CODE MODAL --- */}
       <Modal 
         title="Connect Phone as Tablet" 
@@ -393,6 +393,8 @@ const Dashboard = ({ session }) => {
         </div>
 
       </div>
+      
+      
     </div>
   );
 };
